@@ -1,0 +1,41 @@
+{
+  "name": "cookies-service",
+  "version": "1.0.0",
+  "description": "Standalone cookies management service with database storage and API endpoints",
+  "type": "module",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "nodemon app.js",
+    "demo": "node demo-cookie-pool.js",
+    "check-events": "node check-events.js",
+    "check-db": "node check-mongodb.js",
+    "cleanup-db": "node cleanup-database.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "cookies",
+    "session-management",
+    "web-scraping",
+    "api"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^1.13.2",
+    "compression": "^1.7.4",
+    "cors": "^2.8.5",
+    "crypto": "^1.0.1",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "helmet": "^7.1.0",
+    "moment": "^2.29.4",
+    "mongoose": "^8.0.3",
+    "playwright": "^1.56.1",
+    "playwright-extra": "^4.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

@@ -5,6 +5,7 @@ import { chromium } from 'playwright-extra'
 
 import { BrowserFingerprint } from "./browserFingerprint.js";
 import stealth from 'puppeteer-extra-plugin-stealth'
+import proxyHelper from './helpers/proxy.js'
 stealth()
 // Device settings
 const iphone13 = devices["iPhone 13"];
@@ -22,30 +23,139 @@ const CONFIG = {
 };
 
 let browser = null;
+let failedProxies = new Set(); // Track failed proxies
+let proxyHealthMap = new Map(); // Track proxy success rates
 
 /**
  * Gets a random location for browser fingerprinting
  */
 function getRandomLocation() {
   const locations = [
+    // US Major Cities
     { locale: 'en-US', timezone: 'America/Los_Angeles', latitude: 34.052235, longitude: -118.243683 },
     { locale: 'en-US', timezone: 'America/New_York', latitude: 40.712776, longitude: -74.005974 },
     { locale: 'en-US', timezone: 'America/Chicago', latitude: 41.878113, longitude: -87.629799 },
     { locale: 'en-US', timezone: 'America/Denver', latitude: 39.739235, longitude: -104.990250 },
+    { locale: 'en-US', timezone: 'America/Phoenix', latitude: 33.448143, longitude: -112.096962 },
+    { locale: 'en-US', timezone: 'America/Detroit', latitude: 42.331429, longitude: -83.045753 },
+    { locale: 'en-US', timezone: 'America/Anchorage', latitude: 61.217381, longitude: -149.863129 },
+    
+    // Canada
     { locale: 'en-CA', timezone: 'America/Toronto', latitude: 43.651070, longitude: -79.347015 },
+    { locale: 'en-CA', timezone: 'America/Vancouver', latitude: 49.246292, longitude: -123.116226 },
+    { locale: 'fr-CA', timezone: 'America/Montreal', latitude: 45.508888, longitude: -73.561668 },
+    
+    // UK & Ireland
     { locale: 'en-GB', timezone: 'Europe/London', latitude: 51.507351, longitude: -0.127758 },
+    { locale: 'en-GB', timezone: 'Europe/Dublin', latitude: 53.349804, longitude: -6.260310 },
+    
+    // Australia
+    { locale: 'en-AU', timezone: 'Australia/Sydney', latitude: -33.865143, longitude: 151.209900 },
+    { locale: 'en-AU', timezone: 'Australia/Melbourne', latitude: -37.840935, longitude: 144.946457 },
   ];
   
   return locations[Math.floor(Math.random() * locations.length)];
 }
 
 /**
- * Generate a realistic iPhone user agent
+ * Generate a realistic iPhone user agent with more variety
  */
 function getRealisticIphoneUserAgent() {
-  const iOSVersions = ['15_0', '15_1', '15_2', '15_3', '15_4', '15_5', '15_6', '16_0', '16_1', '16_2'];
+  const iOSVersions = [
+    '15_0', '15_1', '15_2', '15_3', '15_4', '15_5', '15_6', '15_7',
+    '16_0', '16_1', '16_2', '16_3', '16_4', '16_5', '16_6', '16_7',
+    '17_0', '17_1', '17_2', '17_3', '17_4', '17_5'
+  ];
+  
+  const devices = [
+    'iPhone; CPU iPhone OS',
+    'iPad; CPU OS'
+  ];
+  
+  const webKitVersions = ['605.1.15', '606.1.17', '607.1.18', '608.1.20'];
+  const safariVersions = ['604.1', '605.1', '606.1', '607.1'];
+  
   const version = iOSVersions[Math.floor(Math.random() * iOSVersions.length)];
-  return `Mozilla/5.0 (iPhone; CPU iPhone OS ${version} like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/${version.split('_')[0]}.0 Mobile/15E148 Safari/604.1`;
+  const device = devices[Math.floor(Math.random() * devices.length)];
+  const webkit = webKitVersions[Math.floor(Math.random() * webKitVersions.length)];
+  const safari = safariVersions[Math.floor(Math.random() * safariVersions.length)];
+  
+  return `Mozilla/5.0 (${device} ${version} like Mac OS X) AppleWebKit/${webkit} (KHTML, like Gecko) Version/${version.split('_')[0]}.0 Mobile/15E148 Safari/${safari}`;
+}
+
+/**
+ * Get a random proxy from the proxy list, avoiding recently failed ones
+ */
+function getRandomProxy(avoidFailedProxies = true) {
+  const proxies = proxyHelper.proxies;
+  if (!proxies || proxies.length === 0) {
+    console.warn('No proxies available in proxy helper');
+    return null;
+  }
+  
+  let availableProxies = proxies;
+  
+  // Filter out recently failed proxies if requested
+  if (avoidFailedProxies && failedProxies.size > 0) {
+    availableProxies = proxies.filter(proxy => !failedProxies.has(proxy.proxy));
+    
+    // If all proxies have failed recently, clear the failed list and use all proxies
+    if (availableProxies.length === 0) {
+      console.log('All proxies marked as failed, clearing failed proxy list');
+      failedProxies.clear();
+      availableProxies = proxies;
+    }
+  }
+  
+  const randomIndex = Math.floor(Math.random() * availableProxies.length);
+  const selectedProxy = availableProxies[randomIndex];
+  
+  console.log(`Selected proxy: ${selectedProxy.proxy} (${availableProxies.length}/${proxies.length} available)`);
+  return selectedProxy;
+}
+
+/**
+ * Mark a proxy as failed
+ */
+function markProxyAsFailed(proxyString) {
+  if (proxyString) {
+    failedProxies.add(proxyString);
+    console.log(`Marked proxy as failed: ${proxyString}`);
+    
+    // Clear failed proxies after some time to allow retry
+    setTimeout(() => {
+      failedProxies.delete(proxyString);
+      console.log(`Removed proxy from failed list: ${proxyString}`);
+    }, 10 * 60 * 1000); // 10 minutes
+  }
+}
+
+/**
+ * Get a fresh proxy that's different from the current one
+ */
+function getFreshProxy(currentProxy) {
+  const proxies = proxyHelper.proxies;
+  if (!proxies || proxies.length <= 1) {
+    return getRandomProxy();
+  }
+  
+  let attempts = 0;
+  let freshProxy = null;
+  
+  while (attempts < 10) {
+    freshProxy = getRandomProxy(true);
+    
+    // If no current proxy or found a different one, return it
+    if (!currentProxy || !currentProxy.proxy || freshProxy.proxy !== currentProxy.proxy) {
+      console.log(`Selected fresh proxy: ${freshProxy.proxy}`);
+      return freshProxy;
+    }
+    
+    attempts++;
+  }
+  
+  // Fallback: return any random proxy
+  return getRandomProxy(false);
 }
 
 /**
@@ -122,8 +232,8 @@ async function simulateMobileInteractions(page) {
         });
       }, scrollY);
       
-      // Random pause between scrolls (500-2000ms)
-      await page.waitForTimeout(500 + Math.floor(Math.random() * 1500));
+      // More realistic pause between scrolls (1000-3500ms)
+      await page.waitForTimeout(1000 + Math.floor(Math.random() * 2500));
     }
     
     // Simulate random taps/clicks (1-2 times)
@@ -134,7 +244,7 @@ async function simulateMobileInteractions(page) {
       const y = 150 + Math.floor(Math.random() * (viewportSize.height - 300));
       
       await page.mouse.click(x, y);
-      await page.waitForTimeout(500 + Math.floor(Math.random() * 1000));
+      await page.waitForTimeout(800 + Math.floor(Math.random() * 1800));
     }
   } catch (error) {
     console.warn("Error during mobile interaction simulation:", error.message);
@@ -149,6 +259,11 @@ async function initBrowser(proxy) {
   let context = null;
   
   try {
+    // If no proxy is provided, get a random one
+    if (!proxy) {
+      proxy = getRandomProxy();
+    }
+    
     // Get randomized human-like properties
     const location = getRandomLocation();
     
@@ -156,7 +271,7 @@ async function initBrowser(proxy) {
     if (!browser || !browser.isConnected()) {
       // Launch options - headed mode for visibility
       const launchOptions = {
-        headless: false,
+        headless: true,
         args: [
           '--disable-blink-features=AutomationControlled',
           '--disable-web-security',
@@ -202,51 +317,61 @@ async function initBrowser(proxy) {
     }
     
     // Create new context with enhanced fingerprinting
-    context = await browser.newContext({
+    const deviceOptions = {
       ...iphone13,
       userAgent: getRealisticIphoneUserAgent(),
       locale: location.locale,
-      colorScheme: ["dark", "light"][Math.floor(Math.random() * 2)],
+      colorScheme: ["dark", "light", "no-preference"][Math.floor(Math.random() * 3)],
       timezoneId: location.timezone,
       geolocation: {
-        latitude: location.latitude,
-        longitude: location.longitude,
-        accuracy: 100 * Math.random() + 50,
+        latitude: location.latitude + (Math.random() - 0.5) * 0.01, // Small random offset
+        longitude: location.longitude + (Math.random() - 0.5) * 0.01,
+        accuracy: 50 + Math.random() * 100,
       },
       permissions: [
         "geolocation",
         "notifications",
-        "microphone",
-        "camera",
+        ...(Math.random() > 0.3 ? ["microphone"] : []),
+        ...(Math.random() > 0.4 ? ["camera"] : []),
+        ...(Math.random() > 0.7 ? ["midi"] : []),
       ],
-      deviceScaleFactor: 2 + Math.random() * 0.5,
+      deviceScaleFactor: 2 + Math.random() * 1.0,
       hasTouch: true,
-      isMobile: true,
+      isMobile: Math.random() > 0.1, // Occasionally false to mix things up
       javaScriptEnabled: true,
-      acceptDownloads: true,
+      acceptDownloads: Math.random() > 0.2,
       ignoreHTTPSErrors: true,
       bypassCSP: true,
+      reducedMotion: Math.random() > 0.8 ? 'reduce' : 'no-preference',
+      forcedColors: Math.random() > 0.95 ? 'active' : 'none',
       extraHTTPHeaders: {
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9",
-        "Accept-Language": `${location.locale},en;q=0.9`,
+        "Accept-Language": `${location.locale},en;q=0.9${Math.random() > 0.7 ? ',*;q=0.5' : ''}`,
         "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": Math.random() > 0.5 ? "no-cache" : "max-age=0",
         "Sec-Fetch-Dest": "document",
         "Sec-Fetch-Mode": "navigate",
         "Sec-Fetch-Site": "none",
         "Sec-Fetch-User": "?1",
-        "DNT": Math.random() > 0.5 ? "1" : "0",
+        "DNT": Math.random() > 0.6 ? "1" : "0",
         "Upgrade-Insecure-Requests": "1",
-        "Pragma": "no-cache"
+        "Pragma": Math.random() > 0.3 ? "no-cache" : undefined,
+        "Sec-CH-UA": `"Not_A Brand";v="8", "Chromium";v="${120 + Math.floor(Math.random() * 10)}", "Safari";v="${16 + Math.floor(Math.random() * 2)}"`,
+        "Sec-CH-UA-Mobile": "?1",
+        "Sec-CH-UA-Platform": "\"iOS\"",
+        ...(Math.random() > 0.8 ? { "X-Requested-With": "XMLHttpRequest" } : {})
       },
       viewport: {
         width: [375, 390, 414][Math.floor(Math.random() * 3)],
         height: [667, 736, 812, 844][Math.floor(Math.random() * 4)]
       }
-    });
+    };
+    
+    context = await browser.newContext(deviceOptions);
     
     // Create a new page and simulate human behavior
     const page = await context.newPage();
-    await page.waitForTimeout(1000 + Math.random() * 2000);
+    await page.waitForTimeout(2000 + Math.random() * 3000); // Longer initial delay
     await simulateMobileInteractions(page);
     
     return { context, fingerprint: enhancedFingerprint(), page, browser };
@@ -267,60 +392,136 @@ async function handleTicketmasterChallenge(page) {
   const startTime = Date.now();
 
   try {
+    // Enhanced challenge detection
     const challengePresent = await page.evaluate(() => {
-      return document.body.textContent.includes(
-        "Your Browsing Activity Has Been Paused"
-      );
+      const bodyText = document.body.textContent || '';
+      const title = document.title || '';
+      
+      // Check for various challenge indicators
+      return bodyText.includes("Your Browsing Activity Has Been Paused") ||
+             bodyText.includes("Access Denied") ||
+             bodyText.includes("Blocked") ||
+             bodyText.includes("Security Check") ||
+             bodyText.includes("Please verify") ||
+             bodyText.includes("Bot detection") ||
+             title.includes("Access Denied") ||
+             title.includes("Blocked") ||
+             document.querySelector('.challenge-page') !== null ||
+             document.querySelector('[data-testid="challenge"]') !== null ||
+             document.querySelector('.captcha') !== null;
     }).catch(() => false); // Catch any navigation errors
 
     if (challengePresent) {
       console.log("Detected Ticketmaster challenge, attempting resolution...");
       await page.waitForTimeout(1000 + Math.random() * 1000);
 
+      // More realistic human-like behavior during challenge
       try {
         const viewportSize = page.viewportSize();
         if (viewportSize) {
-          await page.mouse.move(
-            Math.floor(Math.random() * viewportSize.width),
-            Math.floor(Math.random() * viewportSize.height),
-            { steps: 5 }
-          );
+          // Multiple random mouse movements
+          for (let i = 0; i < 3; i++) {
+            await page.mouse.move(
+              Math.floor(Math.random() * viewportSize.width),
+              Math.floor(Math.random() * viewportSize.height),
+              { steps: 10 + Math.floor(Math.random() * 10) }
+            );
+            await page.waitForTimeout(800 + Math.random() * 1500);
+          }
+          
+          // Simulate scrolling behavior
+          await page.evaluate(() => {
+            window.scrollBy(0, 100 + Math.random() * 200);
+          });
+          await page.waitForTimeout(1000 + Math.random() * 2000);
         }
       } catch (moveError) {
         console.warn("Mouse movement error in challenge, continuing:", moveError.message);
       }
 
-      const buttons = await page.$$("button").catch(() => []);
+      // Look for various types of challenge buttons and elements
+      const selectors = [
+        'button',
+        'input[type="submit"]',
+        'input[type="button"]',
+        '[role="button"]',
+        '.btn',
+        '.button',
+        'a[href*="continue"]',
+        '[data-testid*="continue"]',
+        '[data-testid*="verify"]'
+      ];
+      
       let buttonClicked = false;
-
-      for (const button of buttons) {
+      
+      for (const selector of selectors) {
         if (Date.now() - startTime > CONFIG.CHALLENGE_TIMEOUT) {
           console.warn("Challenge timeout, continuing without resolution");
           return false;
         }
-
+        
         try {
-          const text = await button.textContent();
-          if (
-            text?.toLowerCase().includes("continue") ||
-            text?.toLowerCase().includes("verify")
-          ) {
-            await button.click();
-            buttonClicked = true;
-            break;
+          const elements = await page.$$(selector).catch(() => []);
+          
+          for (const element of elements) {
+            try {
+              const text = await element.textContent();
+              const isVisible = await element.isVisible().catch(() => false);
+              
+              if (isVisible && text && (
+                text.toLowerCase().includes("continue") ||
+                text.toLowerCase().includes("verify") ||
+                text.toLowerCase().includes("proceed") ||
+                text.toLowerCase().includes("next") ||
+                text.toLowerCase().includes("submit") ||
+                text.toLowerCase().includes("confirm")
+              )) {
+                await page.waitForTimeout(1000 + Math.random() * 2000); // Human-like delay
+                await element.click();
+                buttonClicked = true;
+                console.log(`Clicked challenge button with text: "${text}"`);
+                break;
+              }
+            } catch (buttonError) {
+              console.warn("Button interaction error, continuing:", buttonError.message);
+              continue;
+            }
           }
-        } catch (buttonError) {
-          console.warn("Button click error, continuing:", buttonError.message);
+          
+          if (buttonClicked) break;
+        } catch (selectorError) {
           continue;
         }
       }
 
       if (!buttonClicked) {
-        console.warn("Could not find challenge button, continuing without resolution");
-        return false;
+        console.warn("Could not find challenge button, trying alternative methods...");
+        
+        // Try pressing common keys that might bypass challenges
+        try {
+          await page.keyboard.press('Tab');
+          await page.waitForTimeout(500);
+          await page.keyboard.press('Enter');
+          await page.waitForTimeout(1000);
+          console.log("Attempted keyboard navigation for challenge");
+        } catch (keyError) {
+          console.warn("Keyboard challenge resolution failed:", keyError.message);
+        }
+        
+        // Try clicking in the center of the page
+        try {
+          const viewport = page.viewportSize();
+          if (viewport) {
+            await page.click(viewport.width / 2, viewport.height / 2);
+            await page.waitForTimeout(1000);
+            console.log("Attempted center click for challenge");
+          }
+        } catch (clickError) {
+          console.warn("Center click challenge resolution failed:", clickError.message);
+        }
       }
 
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(3000 + Math.random() * 2000); // Longer wait
       const stillChallenged = await page.evaluate(() => {
         return document.body.textContent.includes(
           "Your Browsing Activity Has Been Paused"
@@ -553,6 +754,20 @@ async function refreshCookies(url, proxy = null) {
     try {
       console.log(`Refreshing cookies from URL ${url} (attempt ${retryCount + 1}/${CONFIG.MAX_REFRESH_RETRIES + 1})`);
 
+      // Use a completely fresh proxy for each retry attempt
+      let currentProxy;
+      if (proxy) {
+        currentProxy = proxy; // Use specified proxy
+      } else if (retryCount === 0) {
+        currentProxy = getRandomProxy(); // First attempt: random proxy
+      } else {
+        currentProxy = getFreshProxy(currentProxy); // Retry: force different proxy
+      }
+      
+      if (currentProxy) {
+        console.log(`Using proxy for attempt ${retryCount + 1}: ${currentProxy.proxy}`);
+      }
+
       // Load existing cookies to seed browser session (avoid bot detection)
       const existingCookies = await loadExistingCookiesFromDB();
       
@@ -572,7 +787,7 @@ async function refreshCookies(url, proxy = null) {
           
           while (initAttempts < 3 && !initSuccess) {
             try {
-              const result = await initBrowser(proxy);
+              const result = await initBrowser(currentProxy);
               if (!result || !result.context || !result.fingerprint) {
                 throw new Error("Failed to initialize browser or generate fingerprint");
               }
@@ -586,6 +801,12 @@ async function refreshCookies(url, proxy = null) {
               initAttempts++;
               initError = error;
               console.error(`Browser init attempt ${initAttempts} failed:`, error.message);
+              
+              // Mark proxy as failed if it's a proxy-related error
+              if (currentProxy && (error.message.includes('proxy') || error.message.includes('ECONNREFUSED') || error.message.includes('timeout'))) {
+                markProxyAsFailed(currentProxy.proxy);
+              }
+              
               await new Promise(resolve => setTimeout(resolve, 1000 * initAttempts));
             }
           }
@@ -603,6 +824,9 @@ async function refreshCookies(url, proxy = null) {
           // Navigate to the provided URL
           console.log(`Navigating to ${url}`);
           
+          // Add pre-navigation delay to seem more human
+          await page.waitForTimeout(1500 + Math.random() * 2000);
+          
           await page.goto(url, {
             waitUntil: "domcontentloaded",
             timeout: CONFIG.PAGE_TIMEOUT
@@ -611,6 +835,9 @@ async function refreshCookies(url, proxy = null) {
           // Check if the page loaded properly
           const currentUrl = page.url();
           console.log(`Successfully loaded page: ${currentUrl}`);
+          
+          // Wait for page to fully settle (more human-like)
+          await page.waitForTimeout(3000 + Math.random() * 4000);
           
           // Check for Ticketmaster challenge
           const isChallengePresent = await checkForTicketmasterChallenge(page);
@@ -743,30 +970,43 @@ async function generateAlternativeEventId(originalEventId) {
 
 /**
  * Get an alternative proxy for retry attempts
- * This function should integrate with your proxy management system
+ * This function returns a different proxy from the pool
  */
 async function getAlternativeProxy(currentProxy) {
   try {
-    // This is a placeholder implementation
-    // In a real system, this would interface with your proxy pool/manager
-    
-    // For now, we'll create a simple variation
-    if (currentProxy && currentProxy.host && currentProxy.port) {
-      // Generate a different port or host variation
-      const portVariation = parseInt(currentProxy.port) + Math.floor(Math.random() * 100) + 1;
-      
-      return {
-        host: currentProxy.host,
-        port: portVariation.toString(),
-        username: currentProxy.username,
-        password: currentProxy.password
-      };
+    const proxies = proxyHelper.proxies;
+    if (!proxies || proxies.length === 0) {
+      console.warn('No proxies available for alternative selection');
+      return null;
     }
     
-    return null;
+    // If we have only one proxy, return it
+    if (proxies.length === 1) {
+      return proxies[0];
+    }
+    
+    // Try to find a different proxy than the current one
+    let attempts = 0;
+    let alternativeProxy = null;
+    
+    while (attempts < 5) {
+      alternativeProxy = getRandomProxy();
+      
+      // If no current proxy or found a different one, return it
+      if (!currentProxy || !currentProxy.proxy || alternativeProxy.proxy !== currentProxy.proxy) {
+        console.log(`Selected alternative proxy: ${alternativeProxy.proxy}`);
+        return alternativeProxy;
+      }
+      
+      attempts++;
+    }
+    
+    // If we couldn't find a different proxy after 5 attempts, return a random one anyway
+    console.log(`Could not find different proxy after 5 attempts, using random proxy: ${alternativeProxy.proxy}`);
+    return alternativeProxy;
   } catch (error) {
     console.warn(`Failed to get alternative proxy: ${error.message}`);
-    return null;
+    return getRandomProxy(); // Fallback to random proxy
   }
 }
 
@@ -796,6 +1036,9 @@ export {
   enhancedFingerprint,
   getRandomLocation,
   getRealisticIphoneUserAgent,
+  getRandomProxy,
+  getFreshProxy,
+  markProxyAsFailed,
   generateAlternativeEventId,
   getAlternativeProxy,
   simulateMobileInteractions

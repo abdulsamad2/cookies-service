@@ -278,8 +278,8 @@ class CookiePoolManager {
       try {
         console.log(`🎯 Session ${sessionId.substring(0, 8)}: Visiting event ${event.eventId} (attempt ${retries + 1})`);
 
-        // Generate fresh cookies using the existing browser-cookies system
-        const result = await refreshCookies(event.url, null);
+        // Generate fresh cookies using the existing browser-cookies system with random proxy
+        const result = await refreshCookies(event.url);
         
         if (!result || !result.cookies || result.cookies.length === 0) {
           throw new Error('No cookies generated');
@@ -373,8 +373,8 @@ class CookiePoolManager {
       try {
         console.log(`🎯 Visiting event: ${event.eventId} (attempt ${retries + 1})`);
 
-        // Generate fresh cookies using the existing browser-cookies system
-        const result = await refreshCookies(event.url, null);
+        // Generate fresh cookies using the existing browser-cookies system with random proxy
+        const result = await refreshCookies(event.url);
         
         if (!result || !result.cookies || result.cookies.length === 0) {
           throw new Error('No cookies generated');

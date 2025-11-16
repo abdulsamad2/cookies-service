@@ -37,6 +37,11 @@ export const config = {
     },
     helmet: {
       contentSecurityPolicy: false
+    },
+    apiKeys: {
+      enabled: process.env.API_KEY_AUTH_ENABLED !== 'false', // Default to true
+      keys: process.env.API_KEYS ? process.env.API_KEYS.split(',') : [],
+      headerName: 'X-API-Key'
     }
   }
 };

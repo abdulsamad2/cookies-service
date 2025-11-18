@@ -6,6 +6,9 @@ import {
   completeRefresh,
   getRefreshDetails,
   checkRefreshStatus,
+  getHealthStatus,
+  getStuckOperations,
+  resetStuckOperations,
   cleanupRefreshHistory
 } from '../controllers/cookieRefreshController.js';
 
@@ -63,6 +66,26 @@ router.put('/:refreshId/complete', completeRefresh);
  * @param {string} refreshId - Refresh operation ID
  */
 router.get('/:refreshId', getRefreshDetails);
+
+/**
+ * @route GET /api/v1/refresh/health
+ * @desc Get health status of the cookie refresh service
+ */
+router.get('/health', getHealthStatus);
+
+/**
+ * @route GET /api/v1/refresh/stuck
+ * @desc Get stuck operations
+ * @query {number} maxDuration - Maximum duration in minutes
+ */
+router.get('/stuck', getStuckOperations);
+
+/**
+ * @route POST /api/v1/refresh/reset-stuck
+ * @desc Reset stuck operations
+ * @query {number} maxDuration - Maximum duration in minutes
+ */
+router.post('/reset-stuck', resetStuckOperations);
 
 /**
  * @route POST /api/v1/refresh/cleanup

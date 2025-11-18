@@ -1,4 +1,4 @@
-import CookieRefreshTracker from '../services/cookieRefreshService.js';
+import CookieRefreshTracker from '../services/cookieRefreshTracker.js';
 import { CookieRefresh } from '../models/index.js';
 
 /**
@@ -193,6 +193,84 @@ export const checkRefreshStatus = async (req, res) => {
     });
   } catch (error) {
     console.error('Error checking refresh status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get health status of the cookie refresh service
+ */
+export const getHealthStatus = async (req, res) => {
+  try {
+    const healthStatus = await CookieRefreshTracker.getHealthStatus();
+    
+    const statusCode = healthStatus.status === 'healthy' ? 200 : 
+                      healthStatus.status === 'degraded' ? 200 : 503;
+    
+    res.status(statusCode).json({
+      success: true,
+      data: healthStatus
+    });
+  } catch (error) {
+    console.error('Error getting health status:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Get stuck operations
+ */
+export const getStuckOperations = async (req, res) => {
+  try {
+    const { maxDuration } = req.query;
+    const maxDurationMs = maxDuration ? parseInt(maxDuration) * 60 * 1000 : undefined;
+    
+    const stuckOps = await CookieRefreshTracker.getStuckOperations(maxDurationMs);
+    
+    res.json({
+      success: true,
+      data: {
+        stuckOperations: stuckOps,
+        count: stuckOps.length
+      }
+    });
+  } catch (error) {
+    console.error('Error getting stuck operations:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Reset stuck operations
+ */
+export const resetStuckOperations = async (req, res) => {
+  try {
+    const { maxDuration } = req.query;
+    const maxDurationMs = maxDuration ? parseInt(maxDuration) * 60 * 1000 : undefined;
+    
+    const resetCount = await CookieRefreshTracker.resetStuckOperations(maxDurationMs);
+    
+    res.json({
+      success: true,
+      message: `Reset ${resetCount} stuck operations`,
+      data: {
+        resetCount
+      }
+    });
+  } catch (error) {
+    console.error('Error resetting stuck operations:', error);
     res.status(500).json({
       success: false,
       message: 'Internal server error',

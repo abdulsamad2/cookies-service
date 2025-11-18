@@ -1,4 +1,4 @@
-import { chromium } from 'playwright';
+import { chromium } from 'patchright';
 import { BrowserFingerprint } from '../browserFingerprint.js';
 
 /**
@@ -30,8 +30,8 @@ class FirefoxCookieManager {
         ]
       };
 
-      // Add proxy configuration if provided
-      if (proxy && proxy.proxy) {
+      // Add proxy configuration if provided and proxies are not disabled
+      if (proxy && proxy.proxy && process.env.DISABLE_PROXIES !== 'true') {
         try {
           const proxyString = proxy.proxy;
           if (typeof proxyString === 'string' && proxyString.includes(':')) {
